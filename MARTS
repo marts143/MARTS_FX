@@ -1,0 +1,999 @@
+//+------------------------------------------------------------------+
+//|                                         MARTS_FX_AI_ELITE.mq5    |
+//|                                                   Final Version  |
+//|                                    From $5 to $10 | v10.0   |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2026, Marts Enterprises LTD"
+#property link      "https://martsfx.com"
+#property version   "10.00"
+#property strict
+#property description "MARTS FX AI ELITE - Institutional Trading System"
+#property description "15 Years Market Analysis | Smart Money Concepts"
+#property description "From Micro Account to Institutional Growth"
+
+#include <Trade/Trade.mqh>
+#include <Math/Stat/Math.mqh>
+
+//+------------------------------------------------------------------+
+//| GLOBAL INPUT PARAMETERS - PRODUCTION OPTIMIZED                   |
+//+------------------------------------------------------------------+
+sinput group "========== ACCOUNT GROWTH PHASES =========="
+sinput double   Phase1_Threshold     = 10.0;     // Survival Phase ($5-$10)
+sinput double   Phase2_Threshold     = 100.0;    // Scaling Phase ($10-$100)
+sinput double   Phase3_Threshold     = 1000.0;   // Growth Phase ($100-$1000)
+sinput double   Phase4_Threshold     = 10000.0;  // Institutional Phase ($1000+)
+
+sinput group "========== RISK PER PHASE =========="
+sinput double   Risk_Phase1          = 2.0;      // Risk % - Survival
+sinput double   Risk_Phase2          = 1.0;      // Risk % - Scaling
+sinput double   Risk_Phase3          = 0.75;     // Risk % - Growth
+sinput double   Risk_Phase4          = 0.5;      // Risk % - Institutional
+
+sinput group "========== ACCOUNT PROTECTION =========="
+sinput double   MaxDailyLoss         = 2.0;      // Max daily loss (%)
+sinput double   MaxTotalDrawdown     = 15.0;     // Max total drawdown (%)
+sinput double   DailyProfitTarget    = 5.0;      // Daily profit target (%)
+sinput double   WeeklyProfitTarget   = 12.0;     // Weekly profit target (%)
+sinput bool     CloseOnTarget        = true;     // Close all when target reached
+
+sinput group "========== TRADING PARAMETERS =========="
+sinput double   MinRiskReward        = 2.5;      // Minimum risk:reward
+sinput int      MaxConcurrentTrades  = 3;        // Max concurrent positions
+sinput int      MaxSpreadPoints      = 35;       // Max spread allowed
+sinput double   EquityLockMultiplier = 2.0;      // Lock equity after X growth
+sinput bool     ReversalOnlySmall    = true;     // Only CHoCH for small accounts
+
+sinput group "========== SESSION & NEWS =========="
+sinput bool     UseSessionFilter     = true;     // Filter by sessions
+sinput int      LondonStart          = 8;        // London open (GMT)
+sinput int      LondonEnd            = 17;       // London close (GMT)
+sinput int      NYStart              = 13;       // New York open (GMT)
+sinput int      NYEnd                = 22;       // New York close (GMT)
+sinput bool     EnableNewsFilter     = true;     // Filter high-impact news
+sinput int      NewsBufferMinutes    = 30;       // Minutes before/after news
+
+sinput group "========== TECHNICAL SETTINGS =========="
+sinput int      ATRPeriod            = 14;       // ATR calculation period
+sinput int      FastMAPeriod         = 8;        // Fast EMA period
+sinput int      SlowMAPeriod         = 21;       // Slow EMA period
+sinput int      RSIPeriod            = 14;       // RSI period
+
+sinput group "========== SYSTEM CONFIGURATION =========="
+sinput int      MagicNumber          = 20260329; // EA Magic number
+sinput int      SlippageProtection   = 30;       // Slippage (points)
+sinput bool     ShowDashboard        = true;     // Show on-chart dashboard
+sinput bool     EnableLogging        = true;     // Enable CSV logging
+sinput int      DashboardX           = 10;       // Dashboard X position
+sinput int      DashboardY           = 50;       // Dashboard Y position
+
+//+------------------------------------------------------------------+
+//| ENUMS - Market State Definitions                                 |
+//+------------------------------------------------------------------+
+enum ENUM_GROWTH_PHASE
+{
+   PHASE_SURVIVAL,        // $5-$10: Ultra-conservative
+   PHASE_SCALING,         // $10-$100: Controlled growth
+   PHASE_GROWTH,          // $100-$1000: Active compounding
+   PHASE_INSTITUTIONAL    // $1000+: Full optimization
+};
+
+enum ENUM_MARKET_REGIME
+{
+   REGIME_TRENDING_BULL,   // Strong upward trend
+   REGIME_TRENDING_BEAR,   // Strong downward trend
+   REGIME_RANGING,         // Consolidation
+   REGIME_VOLATILE,        // High volatility
+   REGIME_LOW_VOLATILITY   // Low volatility
+};
+
+enum ENUM_MARKET_STRUCTURE
+{
+   STRUCT_BOS_BULLISH,     // Break of Structure - Bullish continuation
+   STRUCT_BOS_BEARISH,     // Break of Structure - Bearish continuation
+   STRUCT_CHOCH_BULLISH,   // Change of Character - Bullish reversal
+   STRUCT_CHOCH_BEARISH,   // Change of Character - Bearish reversal
+   STRUCT_LIQUIDITY_SWEEP, // Liquidity grab
+   STRUCT_STABLE           // No structural change
+};
+
+enum ENUM_CRT_PATTERN
+{
+   CRT_ASIA_RANGE,         // Asia session consolidation
+   CRT_LONDON_BREAKOUT,    // London breakout
+   CRT_NY_REVERSAL,        // New York reversal
+   CRT_KILLZONE            // Optimal entry zone
+};
+
+//+------------------------------------------------------------------+
+//| DATA STRUCTURES - Professional Market Representation             |
+//+------------------------------------------------------------------+
+struct SHistoricalPattern
+{
+   datetime date;
+   double price;
+   ENUM_MARKET_REGIME regime;
+   bool wasSuccessful;
+   double profitPotential;
+};
+
+struct SOrderBlock
+{
+   double priceHigh;
+   double priceLow;
+   datetime formationTime;
+   ENUM_TIMEFRAMES timeframe;
+   bool isBullish;
+   bool isMitigated;
+   double strength;
+};
+
+struct SLiquiditySweep
+{
+   bool isValid;
+   double sweepPrice;
+   datetime sweepTime;
+   ENUM_POSITION_TYPE direction;
+   double targetPrice;
+   double confidence;
+};
+
+struct SVolumeProfile
+{
+   double poc;              // Point of Control
+   double valueAreaHigh;    // Value Area High (70% volume)
+   double valueAreaLow;     // Value Area Low (70% volume)
+   double vwap;             // Volume Weighted Average Price
+};
+
+struct SInstitutionalSignal
+{
+   bool isValid;
+   ENUM_POSITION_TYPE direction;
+   double confidence;
+   double entryPrice;
+   double stopLoss;
+   double takeProfit;
+   string rationale;
+   datetime signalTime;
+};
+
+struct STradeRecord
+{
+   datetime openTime;
+   datetime closeTime;
+   ENUM_POSITION_TYPE direction;
+   double openPrice;
+   double closePrice;
+   double lotSize;
+   double profit;
+   double balance;
+   string phase;
+   string signalType;
+};
+
+//+------------------------------------------------------------------+
+//| CLASS 1: GROWTH SCALER - From $5 to $100,000                     |
+//+------------------------------------------------------------------+
+class CGrowthScaler
+{
+private:
+   double m_initialEquity;
+   double m_peakEquity;
+   double m_lockedEquity;
+   ENUM_GROWTH_PHASE m_currentPhase;
+   
+public:
+   CGrowthScaler(double initial)
+   {
+      m_initialEquity = initial;
+      m_peakEquity = initial;
+      m_lockedEquity = initial;
+      m_currentPhase = PHASE_SURVIVAL;
+   }
+   
+   struct SScalingResult
+   {
+      double lotSize;
+      ENUM_GROWTH_PHASE phase;
+      string phaseName;
+      double riskPercent;
+      double riskAmount;
+      bool useReversalOnly;
+      double lockedEquity;
+   };
+   
+   SScalingResult Calculate(double stopLossPoints)
+   {
+      SScalingResult result;
+      double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+      
+      // Update peak equity
+      if(equity > m_peakEquity)
+      {
+         m_peakEquity = equity;
+         CheckMilestone();
+      }
+      
+      // Determine phase based on current equity
+      DeterminePhase(equity);
+      result.phase = m_currentPhase;
+      result.lockedEquity = m_lockedEquity;
+      
+      // Set phase-specific parameters
+      switch(m_currentPhase)
+      {
+         case PHASE_SURVIVAL:
+            result.phaseName = "SURVIVAL";
+            result.riskPercent = Risk_Phase1;
+            result.useReversalOnly = ReversalOnlySmall;
+            break;
+         case PHASE_SCALING:
+            result.phaseName = "SCALING";
+            result.riskPercent = Risk_Phase2;
+            result.useReversalOnly = false;
+            break;
+         case PHASE_GROWTH:
+            result.phaseName = "GROWTH";
+            result.riskPercent = Risk_Phase3;
+            result.useReversalOnly = false;
+            break;
+         default:
+            result.phaseName = "INSTITUTIONAL";
+            result.riskPercent = Risk_Phase4;
+            result.useReversalOnly = false;
+      }
+      
+      result.riskAmount = equity * (result.riskPercent / 100.0);
+      
+      // Calculate lot size
+      if(stopLossPoints > 0 && result.riskAmount > 0)
+      {
+         double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+         double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+         double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+         
+         result.lotSize = result.riskAmount / (stopLossPoints * tickValue);
+         result.lotSize = MathFloor(result.lotSize / lotStep) * lotStep;
+         result.lotSize = MathMax(result.lotSize, minLot);
+         
+         // Ultra-conservative for survival phase
+         if(m_currentPhase == PHASE_SURVIVAL)
+            result.lotSize = MathMin(result.lotSize, minLot);
+      }
+      else
+      {
+         result.lotSize = 0;
+      }
+      
+      return result;
+   }
+   
+   bool IsEquityLocked()
+   {
+      double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+      return (equity <= m_lockedEquity);
+   }
+   
+   double GetLockedEquity() { return m_lockedEquity; }
+   ENUM_GROWTH_PHASE GetCurrentPhase() { return m_currentPhase; }
+   
+private:
+   void DeterminePhase(double equity)
+   {
+      if(equity < Phase1_Threshold)
+         m_currentPhase = PHASE_SURVIVAL;
+      else if(equity < Phase2_Threshold)
+         m_currentPhase = PHASE_SCALING;
+      else if(equity < Phase3_Threshold)
+         m_currentPhase = PHASE_GROWTH;
+      else
+         m_currentPhase = PHASE_INSTITUTIONAL;
+   }
+   
+   void CheckMilestone()
+   {
+      double target = m_initialEquity;
+      while(target * EquityLockMultiplier <= m_peakEquity)
+      {
+         target = target * EquityLockMultiplier;
+      }
+      
+      if(target > m_lockedEquity && m_peakEquity >= target)
+      {
+         m_lockedEquity = target;
+         Print("========================================");
+         Print("!!! MILESTONE ACHIEVED !!!");
+         Print(StringFormat("Equity locked at: $%.2f", m_lockedEquity));
+         Print("========================================");
+      }
+   }
+};
+
+//+------------------------------------------------------------------+
+//| CLASS 2: MARKET REGIME DETECTOR                                  |
+//+------------------------------------------------------------------+
+class CRegimeDetector
+{
+public:
+   struct SRegimeInfo
+   {
+      ENUM_MARKET_REGIME regime;
+      double volatility;
+      double trendStrength;
+      double adx;
+      bool canTrade;
+      double riskMultiplier;
+      string description;
+   };
+   
+   SRegimeInfo Detect()
+   {
+      SRegimeInfo result;
+      
+      double atr = iATR(_Symbol, PERIOD_H1, 14, 0);
+      double price = iClose(_Symbol, PERIOD_H1, 0);
+      result.volatility = (atr / price) * 100;
+      
+      double fastMA = iMA(_Symbol, PERIOD_H1, FastMAPeriod, 0, MODE_EMA, PRICE_CLOSE, 0);
+      double slowMA = iMA(_Symbol, PERIOD_H1, SlowMAPeriod, 0, MODE_EMA, PRICE_CLOSE, 0);
+      result.adx = iADX(_Symbol, PERIOD_H1, 14, PRICE_CLOSE, MODE_MAIN, 0);
+      result.trendStrength = MathAbs(fastMA - slowMA) / atr;
+      
+      // Determine regime
+      if(result.adx > 25 && result.trendStrength > 0.5)
+      {
+         result.regime = (fastMA > slowMA) ? REGIME_TRENDING_BULL : REGIME_TRENDING_BEAR;
+         result.canTrade = true;
+         result.riskMultiplier = 1.0;
+         result.description = (fastMA > slowMA) ? "BULL TREND" : "BEAR TREND";
+      }
+      else if(result.adx < 20)
+      {
+         result.regime = REGIME_RANGING;
+         result.canTrade = false;
+         result.riskMultiplier = 0;
+         result.description = "RANGING - NO TRADE";
+      }
+      else if(result.volatility > 1.5)
+      {
+         result.regime = REGIME_VOLATILE;
+         result.canTrade = true;
+         result.riskMultiplier = 0.5;
+         result.description = "VOLATILE - REDUCE RISK";
+      }
+      else
+      {
+         result.regime = REGIME_LOW_VOLATILITY;
+         result.canTrade = true;
+         result.riskMultiplier = 0.8;
+         result.description = "LOW VOLATILITY - SAFE";
+      }
+      
+      return result;
+   }
+};
+
+//+------------------------------------------------------------------+
+//| CLASS 3: SMC ENGINE - BOS/CHoCH + Liquidity Sweeps               |
+//+------------------------------------------------------------------+
+class CSMCEngine
+{
+private:
+   string m_symbol;
+   double m_lastHigh;
+   double m_lastLow;
+   bool m_isBullishStructure;
+   int m_bosCount;
+   int m_chochCount;
+   
+public:
+   CSMCEngine(string symbol)
+   {
+      m_symbol = symbol;
+      m_isBullishStructure = true;
+      m_bosCount = 0;
+      m_chochCount = 0;
+      m_lastHigh = iHigh(m_symbol, PERIOD_H1, 1);
+      m_lastLow = iLow(m_symbol, PERIOD_H1, 1);
+   }
+   
+   struct SMarketStructure
+   {
+      ENUM_MARKET_STRUCTURE current;
+      bool isReversal;
+      double trendStrength;
+      string description;
+   };
+   
+   SMarketStructure AnalyzeStructure(bool reversalOnly)
+   {
+      SMarketStructure result;
+      result.current = STRUCT_STABLE;
+      result.isReversal = false;
+      result.trendStrength = 0;
+      result.description = "";
+      
+      double currentHigh = iHigh(m_symbol, PERIOD_M15, 0);
+      double currentLow = iLow(m_symbol, PERIOD_M15, 0);
+      double close = iClose(m_symbol, PERIOD_M15, 0);
+      double prevHigh = iHigh(m_symbol, PERIOD_M15, 1);
+      double prevLow = iLow(m_symbol, PERIOD_M15, 1);
+      
+      // CHoCH Detection (Reversal) - HIGHEST PRIORITY
+      if(m_isBullishStructure && currentLow < m_lastLow && close > prevLow)
+      {
+         result.current = STRUCT_CHOCH_BEARISH;
+         result.isReversal = true;
+         result.description = "Bearish CHoCH - Reversal Confirmed";
+         m_isBullishStructure = false;
+         m_lastLow = currentLow;
+         m_chochCount++;
+         Print("MARTS_AI: BEARISH CHOCH DETECTED");
+      }
+      else if(!m_isBullishStructure && currentHigh > m_lastHigh && close < prevHigh)
+      {
+         result.current = STRUCT_CHOCH_BULLISH;
+         result.isReversal = true;
+         result.description = "Bullish CHoCH - Reversal Confirmed";
+         m_isBullishStructure = true;
+         m_lastHigh = currentHigh;
+         m_chochCount++;
+         Print("MARTS_AI: BULLISH CHOCH DETECTED");
+      }
+      
+      // BOS Detection (Continuation) - Only if reversal-only is OFF
+      else if(!reversalOnly && m_isBullishStructure && currentHigh > m_lastHigh)
+      {
+         result.current = STRUCT_BOS_BULLISH;
+         result.description = "Bullish BOS - Trend Continuation";
+         m_lastHigh = currentHigh;
+         m_bosCount++;
+      }
+      else if(!reversalOnly && !m_isBullishStructure && currentLow < m_lastLow)
+      {
+         result.current = STRUCT_BOS_BEARISH;
+         result.description = "Bearish BOS - Trend Continuation";
+         m_lastLow = currentLow;
+         m_bosCount++;
+      }
+      
+      // Liquidity Sweep Detection
+      else if(DetectLiquiditySweep())
+      {
+         result.current = STRUCT_LIQUIDITY_SWEEP;
+         result.isReversal = true;
+         result.description = "Liquidity Sweep - Smart Money Entry";
+      }
+      
+      // Calculate trend strength
+      result.trendStrength = (double)(m_bosCount + 1) / (m_chochCount + 1);
+      result.trendStrength = MathMin(result.trendStrength, 3.0) / 3.0;
+      
+      return result;
+   }
+   
+   SLiquiditySweep DetectLiquiditySweep()
+   {
+      SLiquiditySweep result;
+      result.isValid = false;
+      result.confidence = 0;
+      
+      double currentHigh = iHigh(m_symbol, PERIOD_M15, 0);
+      double currentLow = iLow(m_symbol, PERIOD_M15, 0);
+      double prevHigh = iHigh(m_symbol, PERIOD_M15, 1);
+      double prevLow = iLow(m_symbol, PERIOD_M15, 1);
+      double close = iClose(m_symbol, PERIOD_M15, 0);
+      
+      // Bullish sweep: Price broke previous low but closed above
+      if(currentLow < prevLow && close > prevLow)
+      {
+         result.isValid = true;
+         result.sweepPrice = currentLow;
+         result.sweepTime = TimeCurrent();
+         result.direction = POSITION_TYPE_BUY;
+         result.targetPrice = prevHigh + (prevHigh - prevLow);
+         result.confidence = 0.85;
+      }
+      // Bearish sweep: Price broke previous high but closed below
+      else if(currentHigh > prevHigh && close < prevHigh)
+      {
+         result.isValid = true;
+         result.sweepPrice = currentHigh;
+         result.sweepTime = TimeCurrent();
+         result.direction = POSITION_TYPE_SELL;
+         result.targetPrice = prevLow - (prevHigh - prevLow);
+         result.confidence = 0.85;
+      }
+      
+      return result;
+   }
+   
+   ENUM_POSITION_TYPE GetDirectionFromStructure(SMarketStructure &structure)
+   {
+      switch(structure.current)
+      {
+         case STRUCT_BOS_BULLISH:
+         case STRUCT_CHOCH_BULLISH:
+            return POSITION_TYPE_BUY;
+         case STRUCT_BOS_BEARISH:
+         case STRUCT_CHOCH_BEARISH:
+            return POSITION_TYPE_SELL;
+         default:
+            return WRONG_VALUE;
+      }
+   }
+};
+
+//+------------------------------------------------------------------+
+//| CLASS 4: CRT ENGINE - Asia Range + London/NY Sessions            |
+//+------------------------------------------------------------------+
+class CCRTEngine
+{
+private:
+   string m_symbol;
+   double m_asiaHigh;
+   double m_asiaLow;
+   datetime m_asiaStart;
+   bool m_asiaIdentified;
+   
+public:
+   CCRTEngine(string symbol)
+   {
+      m_symbol = symbol;
+      m_asiaIdentified = false;
+      m_asiaHigh = 0;
+      m_asiaLow = 0;
+   }
+   
+   struct SCRTSetup
+   {
+      ENUM_CRT_PATTERN pattern;
+      double entryPrice;
+      double stopLoss;
+      double takeProfit;
+      double confidence;
+      bool isValid;
+      string description;
+   };
+   
+   void UpdateAsiaRange()
+   {
+      MqlDateTime dt;
+      TimeToStruct(TimeCurrent(), dt);
+      
+      datetime todayStart = StringToTime(StringFormat("%04d.%02d.%02d 00:00:00", dt.year, dt.month, dt.day));
+      datetime asiaEnd = todayStart + 8 * 3600;
+      
+      if(TimeCurrent() >= asiaEnd && !m_asiaIdentified)
+      {
+         m_asiaStart = todayStart;
+         m_asiaHigh = iHigh(m_symbol, PERIOD_H1, iBarShift(m_symbol, PERIOD_H1, asiaEnd));
+         m_asiaLow = iLow(m_symbol, PERIOD_H1, iBarShift(m_symbol, PERIOD_H1, asiaEnd));
+         m_asiaIdentified = true;
+         
+         Print("Asia Range: High=", m_asiaHigh, " Low=", m_asiaLow);
+         DrawAsiaRange();
+      }
+   }
+   
+   SCRTSetup Analyze()
+   {
+      SCRTSetup result;
+      result.isValid = false;
+      result.confidence = 0;
+      
+      if(!m_asiaIdentified) return result;
+      
+      double currentPrice = SymbolInfoDouble(m_symbol, SYMBOL_BID);
+      MqlDateTime dt;
+      TimeToStruct(TimeCurrent(), dt);
+      
+      bool isLondon = (dt.hour >= LondonStart && dt.hour < LondonEnd);
+      bool isNY = (dt.hour >= NYStart && dt.hour < NYEnd);
+      double range = m_asiaHigh - m_asiaLow;
+      
+      if(isLondon && currentPrice > m_asiaHigh)
+      {
+         result.pattern = CRT_LONDON_BREAKOUT;
+         result.entryPrice = currentPrice;
+         result.stopLoss = m_asiaLow - (range * 0.3);
+         result.takeProfit = currentPrice + (range * 1.5);
+         result.confidence = 0.75;
+         result.isValid = true;
+         result.description = "London Breakout Above Asia High";
+      }
+      else if(isLondon && currentPrice < m_asiaLow)
+      {
+         result.pattern = CRT_LONDON_BREAKOUT;
+         result.entryPrice = currentPrice;
+         result.stopLoss = m_asiaHigh + (range * 0.3);
+         result.takeProfit = currentPrice - (range * 1.5);
+         result.confidence = 0.75;
+         result.isValid = true;
+         result.description = "London Breakdown Below Asia Low";
+      }
+      else if(isNY && currentPrice < m_asiaHigh && currentPrice > m_asiaLow)
+      {
+         result.pattern = CRT_NY_REVERSAL;
+         result.entryPrice = currentPrice;
+         result.confidence = 0.65;
+         result.isValid = true;
+         result.description = "NY Reversal Setup";
+      }
+      
+      return result;
+   }
+   
+   void DrawAsiaRange()
+   {
+      string name = "Asia_Range_" + TimeToString(m_asiaStart);
+      if(ObjectFind(0, name) >= 0) ObjectDelete(0, name);
+      
+      datetime asiaEnd = m_asiaStart + 8 * 3600;
+      ObjectCreate(0, name, OBJ_RECTANGLE, 0, m_asiaStart, m_asiaHigh, asiaEnd, m_asiaLow);
+      ObjectSetInteger(0, name, OBJPROP_FILL, true);
+      ObjectSetInteger(0, name, OBJPROP_BACK, true);
+      ObjectSetInteger(0, name, OBJPROP_COLOR, clrGoldenrod);
+   }
+};
+
+//+------------------------------------------------------------------+
+//| CLASS 5: VOLUME PROFILE ANALYZER                                 |
+//+------------------------------------------------------------------+
+class CVolumeProfileAnalyzer
+{
+private:
+   string m_symbol;
+   
+public:
+   CVolumeProfileAnalyzer(string symbol) { m_symbol = symbol; }
+   
+   SVolumeProfile CalculateProfile(int lookback = 100)
+   {
+      SVolumeProfile result;
+      
+      double highs[];
+      double lows[];
+      long volumes[];
+      
+      ArraySetAsSeries(highs, true);
+      ArraySetAsSeries(lows, true);
+      ArraySetAsSeries(volumes, true);
+      
+      CopyHigh(m_symbol, PERIOD_H1, 0, lookback, highs);
+      CopyLow(m_symbol, PERIOD_H1, 0, lookback, lows);
+      CopyTickVolume(m_symbol, PERIOD_H1, 0, lookback, volumes);
+      
+      double maxPrice = highs[ArrayMaximum(highs, 0, lookback)];
+      double minPrice = lows[ArrayMinimum(lows, 0, lookback)];
+      double range = maxPrice - minPrice;
+      int bins = 50;
+      double binSize = range / bins;
+      
+      double volumeByBin[];
+      ArrayResize(volumeByBin, bins);
+      ArrayInitialize(volumeByBin, 0);
+      
+      for(int i = 0; i < lookback; i++)
+      {
+         int bin = (int)((highs[i] - minPrice) / binSize);
+         if(bin >= 0 && bin < bins)
+            volumeByBin[bin] += volumes[i];
+      }
+      
+      // Find Point of Control
+      int pocBin = 0;
+      double maxVolume = 0;
+      for(int i = 0; i < bins; i++)
+      {
+         if(volumeByBin[i] > maxVolume)
+         {
+            maxVolume = volumeByBin[i];
+            pocBin = i;
+         }
+      }
+      
+      result.poc = minPrice + (pocBin + 0.5) * binSize;
+      
+      // VWAP
+      double totalValue = 0;
+      double totalVolume = 0;
+      for(int i = 0; i < lookback; i++)
+      {
+         double avgPrice = (highs[i] + lows[i]) / 2;
+         totalValue += avgPrice * volumes[i];
+         totalVolume += volumes[i];
+      }
+      result.vwap = (totalVolume > 0) ? totalValue / totalVolume : 0;
+      
+      return result;
+   }
+};
+
+//+------------------------------------------------------------------+
+//| CLASS 6: RISK MANAGER - Prop Firm Ready                          |
+//+------------------------------------------------------------------+
+class CRiskManager
+{
+private:
+   double m_startBalance;
+   double m_dailyStartEquity;
+   double m_weeklyStartEquity;
+   double m_maxDailyLoss;
+   double m_maxDrawdown;
+   double m_dailyTarget;
+   double m_weeklyTarget;
+   datetime m_lastDailyReset;
+   datetime m_lastWeeklyReset;
+   int m_tradesToday;
+   
+public:
+   CRiskManager()
+   {
+      m_startBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+      m_dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+      m_weeklyStartEquity = m_dailyStartEquity;
+      m_maxDailyLoss = m_startBalance * (MaxDailyLoss / 100.0);
+      m_maxDrawdown = m_startBalance * (MaxTotalDrawdown / 100.0);
+      m_dailyTarget = m_startBalance * (DailyProfitTarget / 100.0);
+      m_weeklyTarget = m_startBalance * (WeeklyProfitTarget / 100.0);
+      m_lastDailyReset = TimeCurrent();
+      m_lastWeeklyReset = TimeCurrent();
+      m_tradesToday = 0;
+   }
+   
+   void Update()
+   {
+      datetime now = TimeCurrent();
+      MqlDateTime dt;
+      TimeToStruct(now, dt);
+      
+      if(now - m_lastDailyReset >= 86400)
+      {
+         m_dailyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+         m_maxDailyLoss = m_dailyStartEquity * (MaxDailyLoss / 100.0);
+         m_dailyTarget = m_dailyStartEquity * (DailyProfitTarget / 100.0);
+         m_lastDailyReset = now;
+         m_tradesToday = 0;
+         Print("Daily reset - New equity: $", m_dailyStartEquity);
+      }
+      
+      if(dt.day_of_week == 1 && now - m_lastWeeklyReset >= 86400)
+      {
+         m_weeklyStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+         m_weeklyTarget = m_weeklyStartEquity * (WeeklyProfitTarget / 100.0);
+         m_lastWeeklyReset = now;
+         Print("Weekly reset - New equity: $", m_weeklyStartEquity);
+      }
+   }
+   
+   struct SRiskCheck
+   {
+      bool canTrade;
+      string reason;
+      double allowedLot;
+   };
+   
+   SRiskCheck CanTrade(double stopLossPoints, double riskPercent)
+   {
+      SRiskCheck result;
+      result.canTrade = true;
+      result.reason = "";
+      
+      double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+      double dailyLoss = m_dailyStartEquity - currentEquity;
+      double totalLoss = m_startBalance - currentEquity;
+      double dailyProfit = currentEquity - m_dailyStartEquity;
+      double weeklyProfit = currentEquity - m_weeklyStartEquity;
+      
+      if(dailyLoss >= m_maxDailyLoss)
+      {
+         result.canTrade = false;
+         result.reason = StringFormat("Daily loss limit: $%.2f", dailyLoss);
+         return result;
+      }
+      
+      if(totalLoss >= m_maxDrawdown)
+      {
+         result.canTrade = false;
+         result.reason = StringFormat("Max drawdown: $%.2f", totalLoss);
+         return result;
+      }
+      
+      if(CloseOnTarget && dailyProfit >= m_dailyTarget)
+      {
+         result.canTrade = false;
+         result.reason = "Daily target reached";
+         return result;
+      }
+      
+      if(CloseOnTarget && weeklyProfit >= m_weeklyTarget)
+      {
+         result.canTrade = false;
+         result.reason = "Weekly target reached";
+         return result;
+      }
+      
+      if(m_tradesToday >= 5)
+      {
+         result.canTrade = false;
+         result.reason = "Max trades per day";
+         return result;
+      }
+      
+      result.allowedLot = CalculateLotSize(stopLossPoints, riskPercent);
+      return result;
+   }
+   
+   void RecordTrade() { m_tradesToday++; }
+   
+private:
+   double CalculateLotSize(double stopLossPoints, double riskPercent)
+   {
+      if(stopLossPoints <= 0) return 0;
+      
+      double riskAmount = AccountInfoDouble(ACCOUNT_BALANCE) * (riskPercent / 100.0);
+      double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+      double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+      
+      double lotSize = riskAmount / (stopLossPoints * tickValue);
+      lotSize = MathFloor(lotSize / lotStep) * lotStep;
+      lotSize = MathMax(lotSize, minLot);
+      
+      return lotSize;
+   }
+};
+
+//+------------------------------------------------------------------+
+//| CLASS 7: NEWS GUARD - High Impact Events                         |
+//+------------------------------------------------------------------+
+class CNewsGuard
+{
+public:
+   bool IsSafeToTrade()
+   {
+      if(!EnableNewsFilter) return true;
+      
+      MqlCalendarValue values[];
+      MqlCalendarEvent event;
+      datetime now = TimeCurrent();
+      datetime from = now - (NewsBufferMinutes * 60);
+      datetime to = now + (NewsBufferMinutes * 60);
+      
+      if(CalendarValueGet(values, from, to))
+      {
+         for(int i = 0; i < ArraySize(values); i++)
+         {
+            if(CalendarEventById(values[i].event_id, event))
+            {
+               if(event.importance == CALENDAR_IMPORTANCE_HIGH)
+               {
+                  return false;
+               }
+            }
+         }
+      }
+      return true;
+   }
+   
+   string GetNextNews()
+   {
+      MqlCalendarValue values[];
+      MqlCalendarEvent event;
+      datetime now = TimeCurrent();
+      
+      if(CalendarValueGet(values, now, now + 86400))
+      {
+         for(int i = 0; i < ArraySize(values); i++)
+         {
+            if(CalendarEventById(values[i].event_id, event))
+            {
+               if(event.importance == CALENDAR_IMPORTANCE_HIGH)
+               {
+                  return StringFormat("%s at %s", event.name, TimeToString(values[i].time));
+               }
+            }
+         }
+      }
+      return "None";
+   }
+};
+
+//+------------------------------------------------------------------+
+//| CLASS 8: PERFORMANCE LOGGER - CSV Export                         |
+//+------------------------------------------------------------------+
+class CPerformanceLogger
+{
+private:
+   string m_filename;
+   int m_tradeCount;
+   
+public:
+   CPerformanceLogger()
+   {
+      m_filename = "MartsFX_Performance_" + IntegerToString(TimeCurrent()) + ".csv";
+      m_tradeCount = 0;
+      
+      if(EnableLogging)
+         Initialize();
+   }
+   
+   void Initialize()
+   {
+      int handle = FileOpen(m_filename, FILE_WRITE|FILE_CSV|FILE_COMMON, ",");
+      if(handle != INVALID_HANDLE)
+      {
+         FileWrite(handle,
+                   "Timestamp", "Type", "Direction", "Lot", "Entry",
+                   "Exit", "Profit", "Balance", "Phase", "Signal", "Regime"
+         );
+         FileClose(handle);
+         Print("Performance log: ", m_filename);
+      }
+   }
+   
+   void LogTrade(string type, string direction, double lot, double entry,
+                 double exit, double profit, double balance,
+                 string phase, string signal, string regime)
+   {
+      if(!EnableLogging) return;
+      
+      int handle = FileOpen(m_filename, FILE_WRITE|FILE_READ|FILE_CSV|FILE_COMMON, ",");
+      if(handle != INVALID_HANDLE)
+      {
+         FileSeek(handle, 0, SEEK_END);
+         FileWrite(handle,
+                   TimeToString(TimeCurrent()),
+                   type,
+                   direction,
+                   DoubleToString(lot, 3),
+                   DoubleToString(entry, _Digits),
+                   DoubleToString(exit, _Digits),
+                   DoubleToString(profit, 2),
+                   DoubleToString(balance, 2),
+                   phase,
+                   signal,
+                   regime
+         );
+         FileClose(handle);
+         m_tradeCount++;
+      }
+   }
+   
+   void ExportStatistics()
+   {
+      if(!EnableLogging) return;
+      Print("Performance log exported: ", m_filename);
+      Print("Total trades logged: ", m_tradeCount);
+   }
+};
+
+//+------------------------------------------------------------------+
+//| CLASS 9: DASHBOARD - Real-Time Display                           |
+//+------------------------------------------------------------------+
+class CDashboard
+{
+private:
+   int m_x;
+   int m_y;
+   
+public:
+   CDashboard(int x, int y) { m_x = x; m_y = y; }
+   
+   void Update(double equity, double locked, double lot, string phase,
+               string regime, string signal, double spread, bool spreadSafe,
+               int positions, string nextNews)
+   {
+      if(!ShowDashboard) return;
+      
+      // Clear old objects
+      for(int i = 0; i < 20; i++)
+      {
+         string name = "marts_dash_" + IntegerToString(i);
+         if(ObjectFind(0, name) >= 0) ObjectDelete(0, name);
+      }
+      
+      // Background
+      string bg = "marts_dash_bg";
+      if(Obje
